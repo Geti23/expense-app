@@ -438,13 +438,13 @@ else:
                         st.session_state.active_form = None
                         st.rerun()
                         
-                if cols_btns[1].button("✏️ Edit", key=f"edit_{exp_id}", use_container_width=True):
+                if cols_btns[1].button("✏️ Edit", key=f"edit_{exp_id}", use_container_width=True, disabled=not is_active):
                     st.session_state.edit_id = exp_id
                     st.session_state.settle_id = None
                     st.session_state.active_form = None
                     st.rerun()
                     
-                if cols_btns[2].button("🗑️ Delete", key=f"del_{exp_id}", use_container_width=True):
+                if cols_btns[2].button("🗑️ Delete", key=f"del_{exp_id}", use_container_width=True, disabled=not is_active):
                     delete_row(exp_id)
                     st.rerun()
 
