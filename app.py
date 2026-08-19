@@ -39,7 +39,19 @@ def get_data():
             df["Is_Active"] = df["Is_Active"].apply(
                 lambda x: "Archived" if "archiv" in str(x).lower() or str(x).strip().lower() in ['false', '0', 'no'] else "Active"
             )
-            
+
+        if "History_Log" not in df.columns:
+            df["History_Log"] = ""
+        else:
+            df["History_Log"] = df["History_Log"].fillna("").astype(str)
+
+        if "Is_Deleted" not in df.columns:
+            df["Is_Deleted"] = "Valid"
+        else:
+            # Safely parse into strings: if it contains 'delete', mark as "Deleted", else "Valid"
+            df["Is_Deleted"] = df["Is_Deleted"].apply(
+                lambda x: "Deleted" if "delete" in str(x).lower() else "Valid"
+            )
         return df
     except Exception as e:
         st.error(f"Error reading from Google Sheets. Details: {e}")
@@ -54,8 +66,15 @@ def add_row(new_data_dict):
 
 def delete_row(row_id):
     df = get_data()
-    updated_df = df[(df["ID"] != row_id) & (df["Linked_ID"] != row_id)]
-    conn.update(worksheet="Expenses", data=updated_df)
+    
+    # Soft delete the row AND any linked settlements using the string "Deleted"
+    df.loc[(df["ID"] == row_id) | (df["Linked_ID"] == row_id), "Is_Deleted"] = "Deleted"
+    
+    # Optional: Append a note to the History Log so there is a record of the deletion
+    time_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    df.loc[(df["ID"] == row_id), "History_Log"] += f" | [{time_now}] Entry was DELETED"
+    
+    conn.update(worksheet="Expenses", data=df)
     st.cache_data.clear()
 
 def update_row(row_id, updated_data_dict):
@@ -88,6 +107,18 @@ if "settle_id" not in st.session_state:
 st.title("✈️ Trip Dashboard")
 
 df = get_data()
+
+if not df.empty and "Is_Deleted" in df.columns:
+    df = df[df["Is_Deleted"] == "Valid"].copy()
+
+if not df.empty and "History_Log" in df.columns:
+    logs = df[df["History_Log"] != ""]["History_Log"].tolist()
+    if logs:
+        with st.expander("💬 Activity History Log", expanded=False):
+            # Using a fixed height creates a nice scrollable "chat" window
+            with st.container(height=250):
+                for log in logs:
+                    st.markdown(f"*{log}*")
 
 # =============================================================================
 # 1. Top Metrics & Balances (The Global Splitwise Math)
@@ -275,6 +306,9 @@ if st.session_state.active_form == "Expense":
                     st.error("Please enter a description and ensure total > €0.")
                     st.stop()
 
+                time_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                payer_names = ", ".join([m for m in MEMBERS if paids[m] > 0])
+
                 new_row = {
                     "ID": str(uuid.uuid4()),
                     "Date": date.strftime("%Y-%m-%d"),
@@ -284,7 +318,9 @@ if st.session_state.active_form == "Expense":
                     "Total_Amount": total_amount,
                     "Split_Type": "Equal",
                     "Linked_ID": "",
-                    "Is_Active": "Active"  # Always active string
+                    "Is_Active": "Active",
+                    "History_Log": f"[{time_now}] {payer_names} added expense '{item}' with price €{total_amount:.2f}",
+                    "Is_Deleted": "Valid"
                 }
                 for member in MEMBERS:
                     new_row[f"{member}_Paid"] = paids[member]
@@ -309,6 +345,9 @@ elif st.session_state.active_form == "Settlement":
                 if sender == receiver:
                     st.error("Cannot send to self.")
                     st.stop()
+
+                time_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
                 new_row = {
                     "ID": str(uuid.uuid4()),
                     "Date": date.strftime("%Y-%m-%d"),
@@ -318,7 +357,9 @@ elif st.session_state.active_form == "Settlement":
                     "Total_Amount": amount,
                     "Split_Type": "Repayment",
                     "Linked_ID": "",
-                    "Is_Active": "Active" # Always active string
+                    "Is_Active": "Active",
+                    "History_Log": f"[{time_now}] {sender} paid €{amount:.2f} to {receiver} as a general settlement",
+                    "Is_Deleted": "Valid"
                 }
                 for member in MEMBERS:
                     new_row[f"{member}_Paid"] = amount if member == sender else 0.0
@@ -406,6 +447,8 @@ else:
                     
                     c_sub, c_can = st.columns(2)
                     if c_sub.form_submit_button("Submit Repayment", use_container_width=True):
+
+                        time_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
                         new_row = {
                             "ID": str(uuid.uuid4()),
                             "Date": datetime.date.today().strftime("%Y-%m-%d"),
@@ -415,7 +458,9 @@ else:
                             "Total_Amount": amount,
                             "Split_Type": "Repayment",
                             "Linked_ID": exp_id,
-                            "Is_Active": "Active"
+                            "Is_Active": "Active",
+                            "History_Log": f"[{time_now}] {sender} settled €{amount:.2f} to {receiver} as part of expense '{row['Item']}'",
+                            "Is_Deleted": "Valid"
                         }
                         for member in MEMBERS:
                             new_row[f"{member}_Paid"] = amount if member == sender else 0.0
